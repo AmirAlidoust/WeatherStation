@@ -1,62 +1,146 @@
 #include <Servo.h>
-#include <Adafruit_Sensor.h>
-#include <DHT.h>
-#include <DHT_U.h>
+#include <DHT11.h>
 
 Servo myservo;  // create Servo object to control a servo
 
 int potpin = A1;    // analog pin used to connect the potentiometer
-float intensity;    // variable to read the value from the analog pin
 
-int R2;
-int R1 = 120;
-int best_angle;
-const INTERVALS = 2881;   // a day in seconds
-int curr_interval = 0;
+DHT11 dht11(2); // digital pin 2
+
+const int INTERVALS = 288;   // a day in 5 minutes
+int current_interval = -1;
 
 struct Records {
-  int angles[INTERVALS];
-  int intensities[INTERVALS];
-  int temperatures[INTERVALS];
-  int humidities[INTERVALS];
+  uint8_t angles[INTERVALS] = {0};
+  uint8_t intensities[INTERVALS] = {0};
+  uint8_t temperatures[INTERVALS] = {0};
+  uint8_t humidities[INTERVALS] = {0};
+};
+
+struct Records weather_data;
+
+// START ------- helper functions
+
+void rotateServo(int angle ){
+  myservo.write(180 - angle);
 }
 
-Records weather_data;
+int getCurrentBestAngle(){
 
+  if(current_interval==-1)
+    return 0;
 
-int find_sun(int new_angle = 0){
-  int opt_val = 1023;
-  for (int angle=0; angle <= 180; angle += 6) {
-    myservo.write(angle);
-    delay(300);
-    int obs_val = analogRead(potpin);
-    if (obs_val < opt_val) {
-      opt_val = obs_val;
+  return weather_data.angles[current_interval];
+}
+
+void printUint8Array(const uint8_t* arr) {
+
+  int size = current_interval+1;
+  //size = INTERVALS; // prints entire dataset;
+
+  Serial.print("[");
+  for (int i = 0; i < size; i++) {
+    Serial.print(arr[i]);
+    if (i < size - 1) Serial.print(",");
+  }
+  Serial.println("]");
+}
+
+void printRecords(const Records& rec) {
+  Serial.println("Records content:");
+
+  Serial.print("angles:      ");
+  printUint8Array(rec.angles);
+
+  Serial.print("intensities: ");
+  printUint8Array(rec.intensities);
+
+  Serial.print("temperatures:");
+  printUint8Array(rec.temperatures);
+
+  Serial.print("humidities:  ");
+  printUint8Array(rec.humidities);
+
+}
+
+// END ------- helper functions
+
+void find_sun( int current_best_angle = 0 ){ // finds best angle and adds it to weather_data at index = current_interval
+
+  int max_light = 0; // high at higher light intensity. 0 light = 0volt (means very high photo resistance)
+  current_best_angle = 0; // always start from 0
+  int new_angle = current_best_angle;
+
+  for (int angle= current_best_angle; angle <= 180; angle += 6) {
+    
+    rotateServo(angle);
+    delay(300); // allow servo to move to new position and photoresistor to take new reading
+    int obs_light = analogRead(potpin);
+    if (obs_light > max_light) {
+      max_light = obs_light;
       new_angle = angle;
     }
   }
-  weather_data.angles[curr_interval]=new_angle;
-  weather_data.intensity[curr_interval]=opt_val;
+  weather_data.angles[current_interval] = new_angle;
+  weather_data.intensities[current_interval] = map(max_light, 0, 1023, 0, 100);
+  rotateServo(new_angle);
+}
+
+bool find_temp_and_humid(){ // reads temp and humidity and adds them to weather_data at index = current_interval
+
+    int temperature = 0;
+    int humidity = 0;
+
+    int result = dht11.readTemperatureHumidity(temperature, humidity);
+
+    if (result == 0) {
+        weather_data.temperatures[current_interval] = temperature;
+        weather_data.humidities[current_interval] = humidity;
+    } else {
+        Serial.println(DHT11::getErrorString(result));
+        return false;
+    }
+    return true;
 }
 
 
 void setup() {
+
   myservo.attach(3);    // attaches the servo on pin 3 to the Servo object
   Serial.begin(9600);
-  find_sun();
-  dht.begin();
+
+  // dht11.setDelay(500); // Set this to the desired delay. Default is 500ms.
+
 }
 
 void loop() {
 
-  for (int i = 0; i <= 86400; i+=30){
-    find_sun(best_angle);
-    delay(5000);
+  for (int i = 0; i <= 288; i++){
+
+    long start = millis();
+    int cba = getCurrentBestAngle();
+
+    current_interval++; // increment current_interval before calling find_sun & find_temp functions so new data is added at next index.
+
+    find_sun( cba );
+
+    if(!find_temp_and_humid()){ // sensor error
+      break;
+    }
+
+    printRecords(weather_data);
+
+    // GUI STUFF HERE
+
+    Serial.print("Runtime: ");
+    int runtime = millis() - start;
+    Serial.println( runtime );
+    Serial.println(); // blank line for readability
+    
+    delay(30000 - runtime);
   }
 
-  //Serial.print("intensity= ");
-  //Serial.println(intensity);
-
-  delay(100);                           // waits for the servo to get there
-
 }
+
+
+
