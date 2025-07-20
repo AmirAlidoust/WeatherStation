@@ -4,43 +4,45 @@
 #include <Servo.h>
 #include <DHT11.h>
 
-MCUFRIEND_kbv tft;
-
 #define SERVO_PIN 11
 #define POT_PIN A5 // analog pin used to connect the potentiometer
 #define DHT_PIN 10
-#define BLACK   0x0000
-#define BLUE    0x001F
-#define RED     0xF800
-#define GREEN   0x07E0
-#define CYAN    0x07FF
-#define MAGENTA 0xF81F
-#define YELLOW  0xFFE0
-#define WHITE   0xFFFF
 
 #define YP A2
 #define XM A3
 #define YM 8
 #define XP 9
 #define TS_MINX 120
-#define TS_MAXX 900
-#define TS_MINY 70
-#define TS_MAXY 920
+#define TS_MAXX 940
+#define TS_MINY 103
+#define TS_MAXY 922
 #define MINPRESSURE 10
 #define MAXPRESSURE 1000
 
-TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
+#define BLACK   0x0000
+#define BLUE    0x001F
+#define RED     0xF800
+#define GREEN   0x07E0
+#define MAGENTA 0xF81F
+#define YELLOW  0xFFE0
+#define WHITE   0xFFFF
 
-uint8_t selectedIndex = 0;
+const int INTERVALS = 180;   // a day in 8 minutes (max records ram can hold)
+int current_interval = -1;
+
+uint8_t selectedIndex = 4; // index 4 = main menu, index of current screen
 uint8_t zoomLevel = 1;         // 1 = full view, 2 = zoom in, etc.
 int scrollOffset = 0;      // For panning left/right
 bool inMenu = true;
 
+MCUFRIEND_kbv tft;
+TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
+DHT11 dht11(DHT_PIN); // digital pin 2
+Servo myservo;  // create Servo object to control a servo
+
 class Button{
   public:
     // x, y: top-left corner
-    // w, h: width and height
-    // label: The buttons's message
     Button(int x, int y, int w, int h, const char* label, uint8_t font=1, uint16_t bgColor = BLUE): 
     _x(x), _y(y), _w(w), _h(h), _label(label), _font(font), _bgColor(bgColor){}
 
@@ -64,20 +66,15 @@ class Button{
     const char* _label;
 };
 
-Button anglesBtn(60, 30, 200, 40, "1. Angles", 2, BLUE);
-Button intensitiesBtn(60, 80, 200, 40, "2. Intensities", 2, BLUE);
-Button tempsBtn(60, 130, 200, 40, "3. Temperatures", 2, BLUE);
-Button humiditiesBtn(60, 180, 200, 40, "4. Humidities", 2, BLUE);
-Button backBtn(10, 210, 60, 30,"Back",1, CYAN);
-Button zoomInBtn(80, 210, 50, 30,"+",1, GREEN);
-Button zoomOutBtn(140, 210, 50, 30,"-",1, GREEN);
-Button panLeftBtn(200, 210, 50, 30,"<",1, BLUE);
-Button panRightBtn(260, 210, 50, 30,">",1, BLUE); 
-
-DHT11 dht11(DHT_PIN); // digital pin 2
-
-const int INTERVALS = 180;   // a day in 5 minutes
-int current_interval = -1;
+Button anglesBtn(60, 30, 200, 40, "Angles", 2, BLUE);
+Button intensitiesBtn(60, 80, 200, 40, "Intensities", 2, BLUE);
+Button tempsBtn(60, 130, 200, 40, "Temperatures", 2, BLUE);
+Button humiditiesBtn(60, 180, 200, 40, "Humidities", 2, BLUE);
+Button backBtn(10, 220, 60, 20,"Back",2, RED);
+Button zoomInBtn(80, 220, 50, 20,"+",2, MAGENTA);
+Button zoomOutBtn(140, 220, 50, 20,"-",2, MAGENTA);
+Button panLeftBtn(200, 220, 50, 20,"<",2, BLUE);
+Button panRightBtn(260, 220, 50, 20,">",2, BLUE); 
 
 struct Records {
   uint8_t angles[INTERVALS] = {0};
@@ -88,52 +85,15 @@ struct Records {
 
 struct Records weather_data;
 
-Servo myservo;  // create Servo object to control a servo
-
 void rotateServo(int angle ){
   myservo.write(180 - angle);
 }
 
-int getCurrentBestAngle(){
+void responsiveDelay(unsigned long a);
 
-  if(current_interval==-1)
-    return 0;
+void drawGraphFromIndex();
 
-  return weather_data.angles[current_interval];
-}
-
-void printUint8Array(const uint8_t* arr) { //print for debugging
-
-  int size = current_interval+1;
-
-  //size = INTERVALS; // prints entire dataset;
-
-  Serial.print("[");
-  for (int i = 0; i < size ; i++) {
-    Serial.print(arr[i]);
-    if (i < size - 1) Serial.print(",");
-  }
-  Serial.println("]");
-}
-
-void printRecords(const Records& rec) { //print for debugging
-  Serial.println("Records content:");
-
-  Serial.print("angles:      ");
-  printUint8Array(rec.angles);
-
-  Serial.print("intensities: ");
-  printUint8Array(rec.intensities);
-
-  Serial.print("temperatures:");
-  printUint8Array(rec.temperatures);
-
-  Serial.print("humidities:  ");
-  printUint8Array(rec.humidities);
-
-}
-
-void find_sun( int current_best_angle = 0 ){ // finds best angle and adds it to weather_data at index = current_interval
+void find_best_angle( int current_best_angle = 0 ){ // finds best angle and adds it to weather_data at index = current_interval
 
   int max_light = 0; // high at higher light intensity. 0 light = 0volt (means very high photo resistance)
   current_best_angle = 0; // always start from 0 degrees
@@ -149,8 +109,8 @@ void find_sun( int current_best_angle = 0 ){ // finds best angle and adds it to 
       new_angle = angle;
     }
   }
-  weather_data.angles[current_interval] = new_angle;
-  weather_data.intensities[current_interval] = map(max_light, 0, 1023, 0, 100);
+  weather_data.angles[current_interval+1] = new_angle;
+  weather_data.intensities[current_interval+1] = map(max_light, 0, 1023, 0, 100);
   rotateServo(new_angle);
 }
 
@@ -162,8 +122,8 @@ bool find_temp_and_humid(){ // reads temp and humidity and adds them to weather_
     int result = dht11.readTemperatureHumidity(temperature, humidity);
 
     if (result == 0) {
-        weather_data.temperatures[current_interval] = temperature;
-        weather_data.humidities[current_interval] = humidity;
+        weather_data.temperatures[current_interval+1] = temperature;
+        weather_data.humidities[current_interval+1] = humidity;
     } else {
         Serial.println(DHT11::getErrorString(result));
         return false;
@@ -176,70 +136,10 @@ void setup() {
   myservo.attach(SERVO_PIN); 
   uint16_t ID = tft.readID();
   tft.begin(ID);
-  tft.setRotation(3);
+  tft.setRotation(1);
   tft.fillScreen(BLACK);
 
   drawMenu();
-}
-
-void responsiveDelay(unsigned long delayTimeMs) {
-  unsigned long startTime = millis();
-  while (millis() - startTime < delayTimeMs) {
-    updateGUI();
-    delay(3); // allow cpu to breath a little.
-  }
-}
-
-void loop() {
-  for (int i = 0; i <= INTERVALS; i++){
-
-    long start = millis();
-    int cba = getCurrentBestAngle();
-
-    current_interval++; // increment current_interval before calling find_sun & find_temp functions so new data is added at next index.
-
-    find_sun( cba );
-
-    if(!find_temp_and_humid()){ // sensor error
-      break;
-    }
-
-    printRecords(weather_data);
-    
-    // GUI STUFF HERE
-    updateGraph();
-
-    Serial.print("Runtime: ");
-    int runtime = millis() - start;
-    Serial.println( runtime );
-    Serial.println(); // blank line for readability
-    
-    //responsiveDelay(30000 - runtime);
-    responsiveDelay (5000);
-  }
-
-}
-
-void updateGUI() { //non-blocking
-
-  static unsigned long lastTouchTime = 0;
-  const int debounceDelay = 300;
-
-  TSPoint p = ts.getPoint();
-
-  // Restore pin modes
-  pinMode(XM, OUTPUT);
-  pinMode(YP, OUTPUT);
-
-  if (p.z > MINPRESSURE && p.z < MAXPRESSURE) {
-    unsigned long currentTime = millis();
-    if (currentTime - lastTouchTime > debounceDelay) {
-      int x = map(p.x, TS_MINX, TS_MAXX, 0, 320);
-      int y = map(p.y, TS_MINY, TS_MAXY, 0, 240);
-      handleTouch(x, y);  // touch handler
-      lastTouchTime = currentTime;  // Reset debounce timer
-    }
-  }
 }
 
 void drawMenu() {
@@ -252,39 +152,86 @@ void drawMenu() {
   humiditiesBtn.draw(tft); 
 }
 
-void drawGraph(const uint8_t (&dataset)[INTERVALS], const char* title) {
+void drawGraph(const uint8_t (&dataset)[INTERVALS], const char* title, const char unit[]="%") {
   inMenu = false;
   tft.fillScreen(BLACK);
 
   tft.setTextSize(2);
   tft.setTextColor(WHITE);
-  tft.setCursor(10, 2);
+  tft.setCursor(5, 1);
   tft.print(title);
 
-  tft.drawRect(10, 20, 300, 180, WHITE);
+  tft.setCursor(147, 3);
+  tft.setTextSize(2);
+  tft.setTextColor(YELLOW);
+  tft.print("T:");
+  tft.setCursor(168, 3);
+  tft.print(current_interval);
 
-  int originX = 10;
-  int originY = 200;
-  int maxY = 1;
-  for(int i=0;i<INTERVALS;i++){//find max value in dataset for mapping later.
+  tft.setCursor(250, 2);
+  if(current_interval!=-1){
+      char buff[10];
+      
+      int pval = dataset[current_interval];
+
+      snprintf(buff, sizeof(buff), "%d%s", pval, unit);
+
+      tft.print(buff);
+  }
+  else
+      tft.print("...");
+
+  tft.drawFastHLine(20, 200, 290, WHITE);
+  tft.drawFastVLine(20, 20, 180, WHITE);
+
+  int maxY = 0;
+  for(int i=scrollOffset;i<=current_interval;i++){//find max value in dataset for mapping later.
     if(dataset[i]>maxY)
       maxY = dataset[i];
   }
 
+  // draw y-axis labels
+  tft.setTextSize(1);
+  tft.setTextColor(RED);
+  int y_axis_upper_limit = maxY;
+  y_axis_upper_limit = y_axis_upper_limit==0? 50 : y_axis_upper_limit ;
+  for(int i=0; i<=10; i++){
+    tft.drawFastHLine(18, 200 - i*18, 5, WHITE);
+    tft.setCursor(2, 198-i*18);
+    tft.print(i*y_axis_upper_limit/10);
+  }
+
+
+  for(int i=0,j=0 ; i<=290 ; i+=29, j++){ // 11 steps
+
+    tft.drawFastVLine(i+20, 197 , 7, WHITE);
+    tft.setCursor(i+11, 207);
+
+    int x_label = j*18/zoomLevel + scrollOffset;
+
+    tft.print(x_label);
+  }
+
+
   int dataPoints = INTERVALS/zoomLevel;
 
-  if(scrollOffset+dataPoints>INTERVALS)
+  if(scrollOffset+dataPoints>INTERVALS) // dataset boundary checking
     dataPoints = INTERVALS - scrollOffset;
   
-  for(int i=0;i<dataPoints-1;i++){
+  for(int i=0;i<dataPoints-1 && (i+1+scrollOffset) <= current_interval;i++){ 
 
     int x1 = i*zoomLevel;
-    int y1 = map(dataset[i+scrollOffset],0,maxY,0,180);
+    x1 = map(x1, 0, (dataPoints-1)*zoomLevel, 20, 310);
+    int y1 = map(dataset[i+scrollOffset],0,maxY,200,20);
 
     int x2 = (i+1)*zoomLevel;
-    int y2 =  map(dataset[i+1+scrollOffset],0,maxY,0,180);
+    x2 = map(x2, 0,  (dataPoints-1)*zoomLevel , 20, 310);
 
-    tft.drawLine(x1+originX, originY - y1, x2+originX, originY - y2, RED);
+    Serial.println(current_interval);
+
+    int y2 =  map(dataset[i+1+scrollOffset],0,maxY,200,20);
+
+    tft.drawLine(x1, y1, x2, y2, RED);
   }
 
   backBtn.draw(tft);
@@ -296,29 +243,41 @@ void drawGraph(const uint8_t (&dataset)[INTERVALS], const char* title) {
 
 void handleTouch(int x, int y) {
   if (inMenu) {
-    if (anglesBtn.isTouched(x, y))  { selectedIndex = 0; drawGraph(weather_data.angles, "Angles"); }
-    else if (intensitiesBtn.isTouched(x,y)) { selectedIndex = 1; drawGraph(weather_data.intensities, "Intensities"); }
-    else if (tempsBtn.isTouched(x, y)) { selectedIndex = 2; drawGraph(weather_data.temperatures, "Temperatures"); }
-    else if (humiditiesBtn.isTouched(x, y)) { selectedIndex = 3; drawGraph(weather_data.humidities, "Humidities"); }
-    else 
-      selectedIndex = 4;
+    if (anglesBtn.isTouched(x, y))  {
+      selectedIndex = 0;
+      drawGraphFromIndex();
+    }
+    else if (intensitiesBtn.isTouched(x,y)) { 
+      selectedIndex = 1;
+      drawGraphFromIndex();
+    }
+    else if (tempsBtn.isTouched(x, y)) { 
+      selectedIndex = 2;
+      drawGraphFromIndex();
+    }
+    else if (humiditiesBtn.isTouched(x, y)) { 
+      selectedIndex = 3;
+      drawGraphFromIndex();
+    }
   }
   else {
+    
     if (backBtn.isTouched(x, y)) {
       zoomLevel = 1;
       scrollOffset = 0;
+      selectedIndex = 4;
       drawMenu();
     } 
     else if (zoomInBtn.isTouched(x, y)) {
       if (zoomLevel < 8) 
         zoomLevel *= 2;
-      updateGraph();
+      drawGraphFromIndex();
     } 
     else if (zoomOutBtn.isTouched(x, y)) {
 
       if (zoomLevel > 1) 
         zoomLevel /= 2;
-      updateGraph();
+      drawGraphFromIndex();
     } 
     else if (panLeftBtn.isTouched(x, y)) {
 
@@ -326,26 +285,85 @@ void handleTouch(int x, int y) {
       if (scrollOffset < 0)
         scrollOffset = 0;
 
-      updateGraph();
-    } 
+      drawGraphFromIndex();
+    }
     else if (panRightBtn.isTouched(x, y)) {
       scrollOffset += (INTERVALS/4)/zoomLevel;
-      updateGraph();
+      drawGraphFromIndex();
     }
   }
 }
 
-void updateGraph() { // update graph after  +,-,<,> & new readings
-  switch (selectedIndex) {
-    case 0:
-      drawGraph(weather_data.angles, "Angles"); break;
-    case 1: 
-      drawGraph(weather_data.intensities, "Intensities"); break;
-    case 2: 
-      drawGraph(weather_data.temperatures, "Temperatures"); break;
-    case 3: 
-      drawGraph(weather_data.humidities, "Humidities"); break;
-    default:
-      return;
+void drawGraphFromIndex() { // update graph after  +,-,<,> & new readings
+
+    switch (selectedIndex) {
+      case 0:
+        drawGraph(weather_data.angles, "Angle", "\xF7"); break;
+      case 1: 
+        drawGraph(weather_data.intensities, "Intensity"); break;
+      case 2: 
+        drawGraph(weather_data.temperatures, "Temperature","\xF7""C"); break;
+      case 3: 
+        drawGraph(weather_data.humidities, "Humidity","%RH"); break;
+      default:
+        return;
+    }
+}
+
+void updateGUI() { //non-blocking debounce, handles touch functionality
+
+  static unsigned long lastTouchTime = 0;
+  const int debounceDelay = 100;
+
+  TSPoint p = ts.getPoint();
+
+  // Restore pin modes
+  pinMode(XM, OUTPUT);
+  pinMode(YP, OUTPUT);
+
+  if (p.z > MINPRESSURE && p.z < MAXPRESSURE) {
+    unsigned long currentTime = millis();
+    if (currentTime - lastTouchTime > debounceDelay) { // valid touch if true
+      int x = map(p.x, TS_MINX, TS_MAXX, 320, 0);
+      int y = map(p.y, TS_MINY, TS_MAXY, 240, 0);
+      handleTouch(x, y);  // touch handler
+      lastTouchTime = currentTime;  // Reset debounce timer
+    }
   }
+}
+
+void responsiveDelay(unsigned long delayTimeMs) {
+  unsigned long startTime = millis(); // = 5
+  while (millis() - startTime < delayTimeMs) {
+    updateGUI(); // 10ms
+    delay(1); //  cpu breathing
+  }
+}
+
+void loop() {
+  
+  for (int i = 0; i < INTERVALS; i++){
+
+    long start = millis();
+
+    //int cba = getCurrentBestAngle();
+
+    find_best_angle();
+
+    if(!find_temp_and_humid()){ // sensor error
+      break;
+    }
+
+    current_interval++; // increment current interval only after all 4 measurements are taken and recorded.
+
+    // GUI STUFF HERE
+    drawGraphFromIndex();
+
+    int runtime = millis() - start;
+    
+    responsiveDelay (15000 - runtime); // 15 sec delay between every measurement
+  }
+
+  current_interval = -1;
+
 }
