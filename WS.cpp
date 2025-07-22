@@ -296,7 +296,6 @@ void handleTouch(int x, int y) {
       drawGraphFromIndex();
     } 
     else if (zoomOutBtn.isTouched(x, y)) {
-
       if (zoomLevel > 1) 
         zoomLevel /= 2;
       drawGraphFromIndex();
