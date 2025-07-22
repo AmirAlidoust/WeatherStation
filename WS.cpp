@@ -301,11 +301,9 @@ void handleTouch(int x, int y) {
       drawGraphFromIndex();
     } 
     else if (panLeftBtn.isTouched(x, y)) {
-
       scrollOffset -= (INTERVALS/4)/zoomLevel;
       if (scrollOffset < 0)
         scrollOffset = 0;
-
       drawGraphFromIndex();
     }
     else if (panRightBtn.isTouched(x, y)) {
@@ -369,15 +367,18 @@ void loop() {
   // Main data collection loop runs through all intervals
   for (int i = 0; i < INTERVALS; i++){
     long start = millis();
-
-    find_best_angle(); // Find and save best servo angle and light intensity
-    // Read and save temperature and humidity, exit if error
+    
+    // Find and save best servo angle and light intensity
+    find_best_angle();
+    
+    // Read and save temperature and humidity
     if(!find_temp_and_humid()){
       break;
     }
-
-    current_interval++; // Move to next interval after all data is recorded
-
+    
+    // Move to next interval after all data is recorded
+    current_interval++; 
+    
     // Update graph on screen
     drawGraphFromIndex();
 
@@ -386,6 +387,7 @@ void loop() {
     // Wait for remaining time to reach 15 seconds per reading
     responsiveDelay (15000 - runtime);
   }
-
-  current_interval = -1; // Reset interval index after completing all records
+  
+  // Reset interval index after completing all records
+  current_interval = -1;
 }
