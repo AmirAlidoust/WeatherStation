@@ -108,13 +108,12 @@ void responsiveDelay(unsigned long a);
 void drawGraphFromIndex();
 
 // Find best servo angle by checking light intensity
-void find_best_angle(int current_best_angle = 0){
+void find_best_angle(){
   int max_light = 0; // Highest light reading found
-  current_best_angle = 0; // Start search from 0 degrees
-  int new_angle = current_best_angle;
+  int new_angle = 0;
 
   // Sweep servo from 0 to 180 degrees in steps of 6
-  for (int angle= current_best_angle; angle <= 180; angle += 6) {
+  for (int angle= 0; angle <= 180; angle += 6) {
     rotateServo(angle); // Move servo
     responsiveDelay(300); // Wait for servo to move and sensor to stabilize
     int obs_light = analogRead(POT_PIN); // Read potentiometer as light sensor
@@ -206,14 +205,19 @@ void drawGraph(const uint8_t (&dataset)[INTERVALS], const char* title, const cha
   tft.drawFastHLine(20, 200, 290, WHITE);
   tft.drawFastVLine(20, 20, 180, WHITE);
 
+  // Calculate how many data points to show based on zoom level
+  int dataPoints = INTERVALS / zoomLevel;
+
   // Find max Y value in current view to scale graph properly
   int maxY = 0;
-  for(int i=scrollOffset;i<=current_interval;i++){
+  int data_upper_index_limit = dataPoints + scrollOffset;
+
+  for(int i=scrollOffset;i<data_upper_index_limit;i++){
     if(dataset[i]>maxY)
       maxY = dataset[i];
   }
 
-  // Draw Y-axis labels (10 divisions)
+  // Draw Y-axis labels (11 divisions)
   tft.setTextSize(1);
   tft.setTextColor(RED);
   int y_axis_upper_limit = maxY;
@@ -232,21 +236,19 @@ void drawGraph(const uint8_t (&dataset)[INTERVALS], const char* title, const cha
     tft.print(x_label);
   }
 
-  // Calculate how many data points to show based on zoom level
-  int dataPoints = INTERVALS / zoomLevel;
+  // boundary checking for dataPoints
   if(scrollOffset + dataPoints > INTERVALS)
     dataPoints = INTERVALS - scrollOffset;
 
   // Draw the graph line connecting data points
   for (int i=0;i<dataPoints-1 && (i+1+scrollOffset) <= current_interval;i++){ 
+
     int x1 = i*zoomLevel;
-    x1 = map(x1, 0, (dataPoints-1)*zoomLevel, 20, 310);
+    x1 = map(x1, 0, (dataPoints-2)*zoomLevel, 20, 310);
     int y1 = map(dataset[i+scrollOffset],0,maxY,200,20);
 
     int x2 = (i+1)*zoomLevel;
-    x2 = map(x2, 0,  (dataPoints-1)*zoomLevel , 20, 310);
-
-    Serial.println(current_interval);
+    x2 = map(x2, 0,  (dataPoints-2)*zoomLevel , 20, 310);
 
     int y2 =  map(dataset[i+1+scrollOffset],0,maxY,200,20);
 
